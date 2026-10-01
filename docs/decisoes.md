@@ -58,6 +58,13 @@ Registro das decisões tomadas durante a Etapa 0 do `PLANO_INICIAL_AURORA.md`. D
 - **Passos 1–14 concluídos**, incluindo o 12 (regulamento, integrado com o histórico de reservas/visitantes da mesma sessão) e o 14 (disputa concorrente real, duas requisições HTTP simultâneas). Passo 15 (verificação estática) realizado, com pendência documental prevista: a seção Garantias do README, que é Etapa 6.
 - O reinício do passo 13 desta sequência preservou eventos/dados e permitiu continuar a conversa — não envolveu uma confirmação pendente atravessando o reinício (todas já tinham sido respondidas antes). Esse cenário específico já está evidenciado separadamente na Etapa 1.
 
+## Decisões confirmadas na Etapa 6 (documentação e entrega, ver `README.md`)
+
+- **README final escrito**, substituindo o enunciado (preservado em `docs/challenge.md`), com as três seções exigidas — Arquitetura, Garantias, Como rodar. Citações da seção Garantias usam nome de função + link de arquivo, não número de linha fixo — menos frágil a mudanças futuras no código.
+- **Correções de precisão feitas nesta revisão**: (1) a API diferencia explicitamente quais rotas passam pelo `Runner`/Gemini (`mensagens`, `confirmacoes`) das que não passam (`sessoes` só cria no ADK, `eventos` só lê, rotas de `/apartamentos` não tocam o ADK); (2) `main_agent` não é mais descrito como recebendo "toda mensagem nova" — o ADK pode manter um especialista ativo sem voltar a ele; (3) `sub_agents` não é mais apresentado como a única topologia capaz de retomar confirmação — `AgentTool` segue não validada neste projeto, nem provada nem refutada; (4) o mecanismo de busca do regulamento é descrito como heurística (seleciona o capítulo mais pontuado), explicitamente distinta de prova universal de pertinência; (5) `uv sync` passou a `uv sync --locked` na instalação documentada.
+- **Passo 15 (verificação estática) fechado nesta etapa**, reconferido de novo: hashes de `dados/` íntegros, `google-adk==2.10.0` fixado, `.env` não versionado, nenhuma tool aceita apartamento como parâmetro, nenhum texto do regulamento nas instruções do agente, e a seção Garantias do README agora existe com referências reais. Única pendência real do enunciado: publicar o fork (push), que depende de pedido explícito do usuário.
+- A reprodução em ambiente limpo (clone git real, `.env` preenchido, `uv sync`, `aurora-restore`, subida da API) já tinha sido feita num turno anterior desta mesma etapa; não repetida nesta revisão por ser só documental.
+
 ## Comandos usados
 
 ```

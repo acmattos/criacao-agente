@@ -1,10 +1,14 @@
 """API do Residencial Aurora (Etapa 3: contrato completo do enunciado).
 
-Rotas de conversa (sessao, mensagens, confirmacoes, eventos) passam pelo
-agente/ADK via `EXECUTOR`. As rotas de verificacao (`/apartamentos/...`) leem
-os dados do condominio direto do SQLite, sem passar pelo modelo - existem
+Nem toda rota invoca o agente/Gemini: `criar_sessao` so cria a sessao no
+servico de sessao do proprio ADK (via `EXECUTOR.create_session`), sem rodar
+o Runner; `enviar_mensagem` e `responder_confirmacao` processam ou retomam
+a execucao pelo Runner do ADK (essas sim passam pelo agente e pelo Gemini);
+`listar_eventos` so le os eventos ja persistidos, sem invocar o agente. As
+rotas de verificacao (`/apartamentos/...`) leem os dados do condominio
+direto do SQLite proprio da API, sem nenhuma interacao com o ADK - existem
 para o avaliador conferir o efeito das conversas. Consulta ao regulamento
-fica para a Etapa 4.
+e Etapa 4.
 """
 
 from __future__ import annotations
