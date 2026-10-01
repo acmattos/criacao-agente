@@ -46,6 +46,12 @@ Registro das decisões tomadas durante a Etapa 0 do `PLANO_INICIAL_AURORA.md`. D
 - **"Todas as pendências atuais" já estava satisfeito** desde a Etapa 1 (`storage.list_pending_confirmations` filtra por `status='pending'` da sessão inteira, não só da última chamada) — nenhuma mudança necessária.
 - **Fluxo completo do avaliador validado com Gemini real**: passos 1–11 e 13–14 do enunciado rodados contra o servidor HTTP real, incluindo reinício de processo de verdade e disputa concorrente real (dois `curl` simultâneos). Passo 12 fica para a Etapa 4 (regulamento); a sequência única dos 15 passos é Etapa 5 (validação integrada); a seção Garantias do README é Etapa 6 (documentação e entrega) — pelo plano original, não Etapa 4.
 
+## Decisões confirmadas na Etapa 4 (regulamento, ver `docs/etapa4-regulamento.md`)
+
+- **Terceiro especialista** (`regulation_specialist`) com uma tool só de leitura (`consult_regulation`), sem identidade de sessão — o regulamento não depende de apartamento. `main_agent` continua sem o regulamento nas instruções.
+- **Busca por palavra-chave sem infraestrutura vetorial** (`aurora_assistant.regulamento.search`), como o plano original pedia — mas com uma regra de precisão: um artigo só concorre se a pergunta bater com o título do capítulo ou com pelo menos duas palavras distintas no corpo, e o resultado fica restrito a um único capítulo por chamada.
+- **Achado real em validação com Gemini**: a primeira versão da busca (sobreposição simples de 1 palavra) vazou capítulos errados (Piscina, Disposições gerais, Silêncio) numa pergunta sobre animais de estimação, por coincidência lexical ("porte" aparece em "animais de grande porte" e em "boias de grande porte"). Corrigido exigindo evidência mais forte antes de aceitar um artigo; quando a evidência é fraca, a busca agora prefere devolver vazio ("não encontrado") a arriscar o capítulo errado.
+
 ## Comandos usados
 
 ```

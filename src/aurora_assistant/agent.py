@@ -5,6 +5,11 @@ pelas tools de negocio reais (`reservations`, `visitors`). O mecanismo de
 confirmacao/retomada validado na Etapa 1 continua o mesmo: especialista com
 tool que exige confirmacao precisa estar em `sub_agents` (nao `AgentTool`),
 e o id de sessao/apartamento sempre vem do contexto confiavel do ADK.
+
+Etapa 4: especialista de regulamento (`regulation_specialist`), com a tool
+`consult_regulation` fazendo busca seletiva (`aurora_assistant.regulamento`)
+- nunca o documento inteiro. `main_agent` nao recebe o regulamento nas
+instrucoes (Garantia 4): so sabe que existe um especialista para isso.
 """
 
 from __future__ import annotations
@@ -15,7 +20,7 @@ from google.adk.apps.app import App
 from google.adk.tools.function_tool import FunctionTool
 from google.adk.tools.tool_context import ToolContext
 
-from . import areas, config, reservations, storage, visitors
+from . import areas, config, regulamento, reservations, storage, visitors
 
 
 def _identity(tool_context: ToolContext) -> tuple[str, str, str]:
@@ -137,6 +142,25 @@ def authorize_visitor(name: str, date: str, tool_context: ToolContext) -> dict:
         conn.close()
 
 
+# -- regulamento -----------------------------------------------------------
+
+
+def consult_regulation(topic: str) -> dict:
+    """Consulta o regulamento interno do condominio por assunto. Devolve so
+    os artigos relevantes para o assunto perguntado - nunca o documento
+    inteiro, e nunca capitulos de outros assuntos."""
+    articles = regulamento.search(topic)
+    if not articles:
+        return {"encontrado": False}
+    return {
+        "encontrado": True,
+        "trechos": [
+            {"artigo": a.number, "capitulo": a.chapter, "texto": a.text}
+            for a in articles
+        ],
+    }
+
+
 def build_app() -> App:
     reservation_specialist = LlmAgent(
         name="reservation_specialist",
@@ -184,6 +208,23 @@ def build_app() -> App:
         ],
     )
 
+    regulation_specialist = LlmAgent(
+        name="regulation_specialist",
+        model=config.MODEL,
+        description="Especialista em duvidas sobre o regulamento interno do condominio.",
+        instruction=(
+            "Voce responde duvidas sobre o regulamento interno do"
+            " condominio. Use a tool consult_regulation, passando um resumo"
+            " curto do assunto perguntado, para buscar os artigos"
+            " relevantes. Responda com base SOMENTE no que a tool devolver"
+            " (campo 'trechos'). Se a tool devolver encontrado: false, diga"
+            " que nao encontrou essa informacao no regulamento - nunca"
+            " invente uma resposta nem use conhecimento proprio sobre"
+            " regulamentos de condominio em geral."
+        ),
+        tools=[FunctionTool(consult_regulation)],
+    )
+
     main_agent = LlmAgent(
         name="main_agent",
         model=config.MODEL,
@@ -193,14 +234,17 @@ def build_app() -> App:
             " reservas de areas comuns (salao de festas, churrasqueira,"
             " quadra), transfira para reservation_specialist. Para pedidos"
             " de autorizacao ou listagem de visitantes, transfira para"
-            " visitor_specialist."
+            " visitor_specialist. Para duvidas sobre regras, normas ou o"
+            " regulamento interno do condominio, transfira para"
+            " regulation_specialist."
         ),
         # Especialistas com tool de confirmacao validados como sub_agents
         # (nao testamos AgentTool para esse caso - ver
         # docs/etapa1-prova-tecnica.md, secao "Topologia validada"): e o
         # que faz o roteamento de retomada do ADK 2.10.0 encontrar o
-        # agente certo apos a confirmacao.
-        sub_agents=[reservation_specialist, visitor_specialist],
+        # agente certo apos a confirmacao. regulation_specialist nao tem
+        # tool de confirmacao, mas fica no mesmo grupo por consistencia.
+        sub_agents=[reservation_specialist, visitor_specialist, regulation_specialist],
     )
 
     return App(

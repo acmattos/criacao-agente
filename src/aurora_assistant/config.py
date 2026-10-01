@@ -15,6 +15,7 @@ DB_PATH = DATA_DIR / "aurora_etapa1.db"
 ADK_SESSIONS_DB_PATH = DATA_DIR / "aurora_etapa1_adk_sessions.db"
 
 AREAS_PATH = REPO_ROOT / "dados" / "areas.json"
+REGULAMENTO_PATH = REPO_ROOT / "dados" / "regulamento.md"
 
 APP_NAME = "aurora"
 # gemini-2.5-flash esgotou a cota gratuita diaria (20 req/dia) durante a
