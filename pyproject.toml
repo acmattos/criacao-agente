@@ -1,0 +1,14 @@
+[project]
+name = "aurora-assistant"
+version = "0.1.0"
+description = "Assistente do Residencial Aurora (desafio MBA IA - Google ADK)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "google-adk==2.10.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.3,<0.12.0"]
+build-backend = "uv_build"
