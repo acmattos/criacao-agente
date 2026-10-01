@@ -7,6 +7,8 @@ __pycache__/
 *.egg-info/
 /.idea
 
+/.data/
+
 # armazenamento local gerado em runtime (decisao: SQLite, ver docs/decisoes.md)
 *.db
 *.db-journal
