@@ -5,6 +5,8 @@ janelas de falha pedidas na revisao da Etapa 1.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from aurora_assistant import confirmation_service, storage
@@ -95,8 +97,7 @@ async def test_handle_message_ingests_pending_confirmation(conn, executor):
     assert confirmation_id == "adk-confirm-1"
     row = storage.get_confirmation(conn, confirmation_id)
     assert row["status"] == "pending"
-    assert row["area"] == "salao-de-festas"
-    assert row["data"] == "2030-04-20"
+    assert json.loads(row["args_json"]) == {"area": "salao-de-festas", "data": "2030-04-20"}
     assert storage.get_effect(conn, "s1", "adk-fc-1") is None
 
 

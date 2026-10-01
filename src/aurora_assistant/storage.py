@@ -41,8 +41,7 @@ CREATE TABLE IF NOT EXISTS confirmations (
     session_id TEXT NOT NULL REFERENCES sessions(session_id),
     original_function_call_id TEXT NOT NULL,
     tool_name TEXT NOT NULL,
-    area TEXT,
-    data TEXT,
+    args_json TEXT NOT NULL,
     status TEXT NOT NULL CHECK (
         status IN ('pending', 'approved', 'denied', 'executing', 'executed', 'failed')
     ),
@@ -70,11 +69,106 @@ CREATE TABLE IF NOT EXISTS effects_legacy_unmigrated (
     reason TEXT NOT NULL,
     recorded_at TEXT NOT NULL
 );
+
+-- Reservas de verdade (Etapa 2). `code` nunca e reutilizado: cancelar so
+-- muda `status`, a linha nunca e apagada. A unicidade de
+-- (session_id, function_call_id) torna a criacao idempotente por si so,
+-- sem depender da tabela `effects` para isso; o indice unico parcial abaixo
+-- e a garantia de exclusividade da Garantia 5 (vale no INSERT, nao numa
+-- consulta previa).
+CREATE TABLE IF NOT EXISTS reservations (
+    code TEXT PRIMARY KEY,
+    apartment TEXT NOT NULL,
+    area_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'cancelled')),
+    session_id TEXT NOT NULL,
+    function_call_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    cancelled_at TEXT,
+    UNIQUE (session_id, function_call_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reservations_active_area_date
+    ON reservations(area_id, date) WHERE status = 'active';
+
+-- Autorizacoes de visitante (Etapa 2). Mesma logica de idempotencia por
+-- (session_id, function_call_id); nao ha regra de exclusividade por
+-- area/data aqui (nao existe "area" em visitantes).
+CREATE TABLE IF NOT EXISTS visitor_authorizations (
+    id TEXT PRIMARY KEY,
+    apartment TEXT NOT NULL,
+    name TEXT NOT NULL,
+    date TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    function_call_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (session_id, function_call_id)
+);
 """
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _migrate_legacy_confirmations_if_needed(conn: sqlite3.Connection) -> None:
+    """Migra `confirmations` do esquema antigo (colunas fixas `area`/`data`,
+    pensadas so para a tool de prova da Etapa 1) para `args_json` (os
+    argumentos originais da tool, quaisquer que sejam - Etapa 2 tem tools
+    com parametros diferentes, como `name`/`date` da autorizacao de
+    visitante). Precisa rodar DEPOIS de `_migrate_legacy_effects_if_needed`,
+    que ainda consulta `confirmations.area`/`confirmations.data` para
+    reconstruir `params` de efeitos antigos.
+
+    Cada linha antiga mapeia 1:1 para uma linha nova (sem ambiguidade
+    possivel aqui, ao contrario da migracao de `effects`): so empacota
+    `area`/`data` (quando presentes) num dict.
+    """
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(confirmations)").fetchall()]
+    if not cols or "args_json" in cols:
+        return
+
+    old_rows = conn.execute(
+        """
+        SELECT id, session_id, original_function_call_id, tool_name, area, data,
+               status, created_at, resolved_at
+        FROM confirmations
+        """
+    ).fetchall()
+    conn.execute("ALTER TABLE confirmations RENAME TO confirmations_legacy_v1_backup")
+    conn.executescript(SCHEMA)
+
+    for row in old_rows:
+        args: dict[str, Any] = {}
+        if row["area"] is not None:
+            args["area"] = row["area"]
+        if row["data"] is not None:
+            args["data"] = row["data"]
+        conn.execute(
+            """
+            INSERT INTO confirmations
+                (id, session_id, original_function_call_id, tool_name, args_json, status, created_at, resolved_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["id"],
+                row["session_id"],
+                row["original_function_call_id"],
+                row["tool_name"],
+                json.dumps(args),
+                row["status"],
+                row["created_at"],
+                row["resolved_at"],
+            ),
+        )
+    conn.commit()
+    if old_rows:
+        logger.warning(
+            "Migracao de confirmations (esquema antigo area/data -> args_json): "
+            "%d linha(s) migrada(s).",
+            len(old_rows),
+        )
 
 
 def _migrate_legacy_effects_if_needed(conn: sqlite3.Connection) -> None:
@@ -156,7 +250,11 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Ordem importa: a migracao de effects ainda le confirmations.area/data,
+    # entao precisa rodar antes da migracao de confirmations, que remove
+    # essas colunas.
     _migrate_legacy_effects_if_needed(conn)
+    _migrate_legacy_confirmations_if_needed(conn)
     conn.executescript(SCHEMA)
     return conn
 
@@ -188,25 +286,27 @@ def insert_pending_confirmation(
     session_id: str,
     original_function_call_id: str,
     tool_name: str,
-    area: Optional[str],
-    data: Optional[str],
+    args: dict[str, Any],
 ) -> None:
     """Registra uma nova pendencia. Idempotente: se o id ja existe (mesma
     function-call de confirmacao vista de novo), nao faz nada - nunca reseta
-    uma confirmacao ja resolvida de volta para 'pending'."""
+    uma confirmacao ja resolvida de volta para 'pending'.
+
+    `args` sao os argumentos originais da tool, quaisquer que sejam - nao
+    fixos em area/data, porque tools diferentes (reserva, visitante) tem
+    parametros diferentes."""
     conn.execute(
         """
         INSERT OR IGNORE INTO confirmations
-            (id, session_id, original_function_call_id, tool_name, area, data, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+            (id, session_id, original_function_call_id, tool_name, args_json, status, created_at)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?)
         """,
         (
             confirmation_id,
             session_id,
             original_function_call_id,
             tool_name,
-            area,
-            data,
+            json.dumps(args),
             now_iso(),
         ),
     )
@@ -281,14 +381,66 @@ class EffectParamsMismatch(Exception):
     """
 
 
+def get_effect_record(
+    conn: sqlite3.Connection, session_id: str, original_function_call_id: str
+) -> Optional[dict[str, Any]]:
+    """Devolve `{"params": ..., "result": ...}` do efeito persistido para
+    essa identidade, ou None. Usado quando quem chama precisa comparar os
+    parametros (ver `reservations.create_reservation`), nao so ler o
+    resultado."""
+    row = conn.execute(
+        """
+        SELECT params_json, result_json FROM effects
+         WHERE session_id = ? AND original_function_call_id = ?
+        """,
+        (session_id, original_function_call_id),
+    ).fetchone()
+    if row is None:
+        return None
+    return {"params": json.loads(row["params_json"]), "result": json.loads(row["result_json"])}
+
+
 def get_effect(
     conn: sqlite3.Connection, session_id: str, original_function_call_id: str
 ) -> Optional[dict[str, Any]]:
-    row = conn.execute(
-        "SELECT result_json FROM effects WHERE session_id = ? AND original_function_call_id = ?",
-        (session_id, original_function_call_id),
-    ).fetchone()
-    return json.loads(row["result_json"]) if row else None
+    record = get_effect_record(conn, session_id, original_function_call_id)
+    return record["result"] if record is not None else None
+
+
+def effect_params_match(record: dict[str, Any], params: dict[str, Any]) -> bool:
+    """Compara os parametros de um efeito ja persistido (de
+    `get_effect_record`) contra os parametros de uma nova tentativa, com a
+    mesma normalizacao (`sort_keys`) usada ao gravar."""
+    return json.dumps(record["params"], sort_keys=True) == json.dumps(params, sort_keys=True)
+
+
+def insert_effect_row(
+    conn: sqlite3.Connection,
+    session_id: str,
+    original_function_call_id: str,
+    params: dict[str, Any],
+    result: dict[str, Any],
+) -> None:
+    """INSERT cru do efeito - SEM commit nem rollback. Quem chama controla
+    a transacao, porque este insert precisa acontecer na MESMA transacao de
+    uma escrita de negocio (reserva, autorizacao de visitante) para que as
+    duas sejam atomicas: ou as duas ficam gravadas, ou nenhuma fica. Ver
+    `reservations.create_reservation` e `visitors.authorize_visitor`.
+    """
+    conn.execute(
+        """
+        INSERT INTO effects
+            (session_id, original_function_call_id, params_json, result_json, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            session_id,
+            original_function_call_id,
+            json.dumps(params, sort_keys=True),
+            json.dumps(result),
+            now_iso(),
+        ),
+    )
 
 
 def record_effect_if_absent(
@@ -298,40 +450,41 @@ def record_effect_if_absent(
     params: dict[str, Any],
     result: dict[str, Any],
 ) -> dict[str, Any]:
-    """Grava o efeito uma unica vez, identificado por (session_id,
-    original_function_call_id) - nunca so pelo id da function-call, que vem
-    do ADK/modelo e nao tem unicidade global garantida entre sessoes.
+    """Grava o efeito uma unica vez, numa transacao propria e autocontida.
+
+    Para tools SEM tabela de negocio dedicada (ex.: a tool de prova da
+    Etapa 1): o efeito e a unica coisa que precisa ser atomica. Tools com
+    tabela de negocio real (reservations, visitor_authorizations) NAO usam
+    esta funcao - elas chamam `insert_effect_row` dentro da PROPRIA
+    transacao da escrita de negocio, para que as duas sejam atomicas juntas
+    (ver `reservations.create_reservation`).
 
     Se a mesma identidade ja tiver um efeito com os MESMOS `params`, devolve
-    o resultado ja persistido (idempotente: cobre reexecucao da mesma
-    function-call original pelo ADK). Se os parametros forem diferentes,
-    levanta EffectParamsMismatch - a identidade nao pode ser reaproveitada
-    para uma operacao diferente.
+    o resultado ja persistido. Se os parametros forem diferentes, levanta
+    EffectParamsMismatch - a identidade nao pode ser reaproveitada para uma
+    operacao diferente.
     """
-    params_json = json.dumps(params, sort_keys=True)
-    try:
-        conn.execute(
-            """
-            INSERT INTO effects
-                (session_id, original_function_call_id, params_json, result_json, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (session_id, original_function_call_id, params_json, json.dumps(result), now_iso()),
-        )
-        conn.commit()
-        return result
-    except sqlite3.IntegrityError:
-        existing = conn.execute(
-            """
-            SELECT params_json, result_json FROM effects
-             WHERE session_id = ? AND original_function_call_id = ?
-            """,
-            (session_id, original_function_call_id),
-        ).fetchone()
-        assert existing is not None
-        if existing["params_json"] != params_json:
+    existing = get_effect_record(conn, session_id, original_function_call_id)
+    if existing is not None:
+        if not effect_params_match(existing, params):
             raise EffectParamsMismatch(
                 f"a operacao {original_function_call_id} da sessao {session_id} ja foi"
                 " executada com parametros diferentes dos agora apresentados"
             )
-        return json.loads(existing["result_json"])
+        return existing["result"]
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        insert_effect_row(conn, session_id, original_function_call_id, params, result)
+        conn.commit()
+        return result
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        existing = get_effect_record(conn, session_id, original_function_call_id)
+        assert existing is not None
+        if not effect_params_match(existing, params):
+            raise EffectParamsMismatch(
+                f"a operacao {original_function_call_id} da sessao {session_id} ja foi"
+                " executada com parametros diferentes dos agora apresentados"
+            )
+        return existing["result"]

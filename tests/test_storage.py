@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -33,8 +34,7 @@ def test_insert_pending_confirmation_is_idempotent(conn):
         session_id="s1",
         original_function_call_id="fc1",
         tool_name="reservar_area_prova",
-        area="salao-de-festas",
-        data="2030-04-20",
+        args={"area": "salao-de-festas", "data": "2030-04-20"},
     )
     # mesma confirmacao "vista" de novo (ex.: reconsulta de eventos) nao deve
     # recriar nem resetar o status.
@@ -45,8 +45,7 @@ def test_insert_pending_confirmation_is_idempotent(conn):
         session_id="s1",
         original_function_call_id="fc1",
         tool_name="reservar_area_prova",
-        area="salao-de-festas",
-        data="2030-04-20",
+        args={"area": "salao-de-festas", "data": "2030-04-20"},
     )
     row = storage.get_confirmation(conn, "c1")
     assert row["status"] == "approved"
@@ -60,8 +59,7 @@ def test_list_pending_confirmations_only_lists_pending(conn):
         session_id="s1",
         original_function_call_id="fc1",
         tool_name="reservar_area_prova",
-        area="salao-de-festas",
-        data="2030-04-20",
+        args={"area": "salao-de-festas", "data": "2030-04-20"},
     )
     storage.insert_pending_confirmation(
         conn,
@@ -69,8 +67,7 @@ def test_list_pending_confirmations_only_lists_pending(conn):
         session_id="s1",
         original_function_call_id="fc2",
         tool_name="reservar_area_prova",
-        area="quadra",
-        data="2030-04-21",
+        args={"area": "quadra", "data": "2030-04-21"},
     )
     storage.try_resolve(conn, "c1", "s1", approve=True)
 
@@ -87,8 +84,7 @@ class TestTryResolve:
             session_id="s1",
             original_function_call_id="fc1",
             tool_name="reservar_area_prova",
-            area="salao-de-festas",
-            data="2030-04-20",
+            args={"area": "salao-de-festas", "data": "2030-04-20"},
         )
         assert storage.try_resolve(conn, "c1", "s1", approve=True) is True
         assert storage.get_confirmation(conn, "c1")["status"] == "approved"
@@ -101,8 +97,7 @@ class TestTryResolve:
             session_id="s1",
             original_function_call_id="fc1",
             tool_name="reservar_area_prova",
-            area="salao-de-festas",
-            data="2030-04-20",
+            args={"area": "salao-de-festas", "data": "2030-04-20"},
         )
         assert storage.try_resolve(conn, "c1", "s1", approve=True) is True
         assert storage.try_resolve(conn, "c1", "s1", approve=True) is False
@@ -116,8 +111,7 @@ class TestTryResolve:
             session_id="s1",
             original_function_call_id="fc1",
             tool_name="reservar_area_prova",
-            area="salao-de-festas",
-            data="2030-04-20",
+            args={"area": "salao-de-festas", "data": "2030-04-20"},
         )
         assert storage.try_resolve(conn, "c1", "s1", approve=False) is True
         assert storage.get_confirmation(conn, "c1")["status"] == "denied"
@@ -131,8 +125,7 @@ class TestTryResolve:
             session_id="s1",
             original_function_call_id="fc1",
             tool_name="reservar_area_prova",
-            area="salao-de-festas",
-            data="2030-04-20",
+            args={"area": "salao-de-festas", "data": "2030-04-20"},
         )
         assert storage.try_resolve(conn, "c1", "s2", approve=True) is False
         assert storage.get_confirmation(conn, "c1")["status"] == "pending"
@@ -197,9 +190,18 @@ class TestLegacyEffectsMigration:
     quando isso puder ser determinado sem ambiguidade a partir de
     `confirmations`."""
 
-    def _make_legacy_db(self, tmp_path):
+    def _make_legacy_db(self, tmp_path, *, sessions=("s1",)):
         db_path = tmp_path / "legacy.db"
         raw = sqlite3.connect(db_path)
+        raw.execute(
+            """
+            CREATE TABLE sessions (
+                session_id TEXT PRIMARY KEY,
+                apartment TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
         raw.execute(
             """
             CREATE TABLE effects (
@@ -224,6 +226,11 @@ class TestLegacyEffectsMigration:
             )
             """
         )
+        for session_id in sessions:
+            raw.execute(
+                "INSERT INTO sessions VALUES (?, ?, ?)",
+                (session_id, "101", "2026-01-01T00:00:00+00:00"),
+            )
         raw.commit()
         return db_path, raw
 
@@ -250,7 +257,7 @@ class TestLegacyEffectsMigration:
             conn.close()
 
     def test_preserves_ambiguous_row_without_guessing(self, tmp_path):
-        db_path, raw = self._make_legacy_db(tmp_path)
+        db_path, raw = self._make_legacy_db(tmp_path, sessions=("s1", "s2"))
         raw.execute(
             "INSERT INTO effects VALUES ('fc-ambiguo', '{\"status\": \"reservado\"}', '2026-01-01T00:00:00+00:00')"
         )
@@ -313,5 +320,86 @@ class TestLegacyEffectsMigration:
         conn2 = storage.connect(db_path)
         try:
             assert conn2.execute("SELECT COUNT(*) c FROM effects").fetchone()["c"] == 1
+        finally:
+            conn2.close()
+
+
+class TestLegacyConfirmationsMigration:
+    """`confirmations` ja existiu com colunas fixas `area`/`data` (pensadas
+    so para a tool de prova da Etapa 1). A Etapa 2 tem tools com parametros
+    diferentes (ex. `name`/`date` de autorizacao de visitante), entao a
+    coluna virou `args_json` generico. A migracao preserva os dados: cada
+    linha antiga mapeia 1:1 para a nova, sem ambiguidade possivel."""
+
+    def _make_legacy_confirmations_db(self, tmp_path):
+        db_path = tmp_path / "legacy_confirmations.db"
+        raw = sqlite3.connect(db_path)
+        raw.execute(
+            """
+            CREATE TABLE sessions (
+                session_id TEXT PRIMARY KEY,
+                apartment TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        raw.execute(
+            """
+            CREATE TABLE confirmations (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                original_function_call_id TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                area TEXT,
+                data TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                resolved_at TEXT
+            )
+            """
+        )
+        raw.execute("INSERT INTO sessions VALUES ('s1', '101', '2026-01-01T00:00:00+00:00')")
+        raw.commit()
+        return db_path, raw
+
+    def test_migrates_area_data_into_args_json(self, tmp_path):
+        db_path, raw = self._make_legacy_confirmations_db(tmp_path)
+        raw.execute(
+            "INSERT INTO confirmations VALUES "
+            "('c1', 's1', 'fc1', 'reservar_area_prova', 'salao-de-festas', '2030-04-20', "
+            "'executed', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')"
+        )
+        raw.commit()
+        raw.close()
+
+        conn = storage.connect(db_path)
+        try:
+            row = storage.get_confirmation(conn, "c1")
+            assert row["status"] == "executed"
+            assert json.loads(row["args_json"]) == {"area": "salao-de-festas", "data": "2030-04-20"}
+            # a tabela antiga continua no banco, preservada.
+            backup_count = conn.execute(
+                "SELECT COUNT(*) c FROM confirmations_legacy_v1_backup"
+            ).fetchone()["c"]
+            assert backup_count == 1
+        finally:
+            conn.close()
+
+    def test_migration_runs_once_and_does_not_duplicate(self, tmp_path):
+        db_path, raw = self._make_legacy_confirmations_db(tmp_path)
+        raw.execute(
+            "INSERT INTO confirmations VALUES "
+            "('c1', 's1', 'fc1', 'reservar_area_prova', 'quadra', '2030-04-20', "
+            "'pending', '2026-01-01T00:00:00+00:00', NULL)"
+        )
+        raw.commit()
+        raw.close()
+
+        conn1 = storage.connect(db_path)
+        conn1.close()
+        conn2 = storage.connect(db_path)
+        try:
+            count = conn2.execute("SELECT COUNT(*) c FROM confirmations").fetchone()["c"]
+            assert count == 1
         finally:
             conn2.close()

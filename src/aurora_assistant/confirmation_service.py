@@ -10,6 +10,7 @@ Gemini de verdade); nos testes e um fake determinístico.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any, Optional, Protocol
 
@@ -60,18 +61,26 @@ def _ingest_new_confirmations(
                 session_id=session_id,
                 original_function_call_id=original.get("id", fc["id"]),
                 tool_name=original.get("name", ""),
-                area=original_args.get("area"),
-                data=original_args.get("data"),
+                args=original_args,
             )
 
 
 def _build_pending_list(conn: sqlite3.Connection, session_id: str) -> list[dict[str, Any]]:
+    """Monta `confirmacoes_pendentes` a partir dos argumentos reais da tool
+    (`args_json`) - genericamente, sem assumir que toda tool tem `area`/
+    `data`: a autorizacao de visitante, por exemplo, tem `name`/`date`.
+
+    `taxa` so e adicionada quando `args` tem uma chave `area` que bate com
+    uma area cadastrada - nunca extraida de um argumento do modelo."""
     pendentes = []
     for row in storage.list_pending_confirmations(conn, session_id):
-        detalhes: dict[str, Any] = {"area": row["area"], "data": row["data"]}
-        taxa = areas.lookup_taxa(row["area"]) if row["area"] else None
-        if taxa is not None:
-            detalhes["taxa"] = taxa
+        args = json.loads(row["args_json"])
+        detalhes: dict[str, Any] = dict(args)
+        area = args.get("area")
+        if area:
+            taxa = areas.lookup_taxa(area)
+            if taxa is not None:
+                detalhes["taxa"] = taxa
         pendentes.append({"id": row["id"], "acao": row["tool_name"], "detalhes": detalhes})
     return pendentes
 

@@ -31,6 +31,15 @@ Registro das decisões tomadas durante a Etapa 0 do `PLANO_INICIAL_AURORA.md`. D
 - **Identidade do efeito é por sessão, não só pelo id da function-call**: o id que o ADK gera para uma function-call (ex. `call_549289`) não tem unicidade global garantida entre sessões. A tabela `effects` usa chave composta `(session_id, original_function_call_id)`, com `session_id` sempre vindo de `tool_context.session.id` (contexto confiável do ADK, nunca argumento do modelo). Reaproveitar a identidade com parâmetros diferentes é rejeitado (`storage.EffectParamsMismatch`), nunca executado nem devolvido silenciosamente. Migração do esquema antigo preserva os dados (nunca apaga), associando só quando a sessão é determinável sem ambiguidade — ver `docs/etapa1-prova-tecnica.md`.
 - **Identificadores internos em inglês**: agente `principal` → `main_agent`, `especialista_reservas` → `reservation_specialist`, tool `reservar_area_prova` → `reserve_area_proof`. Antes de renomear, toda confirmação pendente nos bancos locais foi resolvida pela própria API, para não deixar nada preso ao nome antigo — validado depois que uma sessão criada antes da renomeação continuou aceitando mensagens normalmente.
 
+## Decisões confirmadas na Etapa 2 (regras de negócio reais, ver `docs/etapa2-regras-negocio.md`)
+
+- **Tool de prova substituída** por tools reais: `list_my_reservations`, `check_area_availability`, `create_reservation`, `cancel_reservation` (`reservation_specialist`); `list_my_visitors`, `authorize_visitor` (novo especialista `visitor_specialist`, também `sub_agents`, mesma topologia validada na Etapa 1).
+- **Exclusividade de área/data (Garantia 5)** garantida por índice único parcial na gravação (`reservations`, `WHERE status='active'`), não por conferência prévia — conflito vira `sqlite3.IntegrityError` capturado e traduzido em resposta de negócio normal, nunca erro de servidor.
+- **Identidade de idempotência nas próprias tabelas de negócio** (`UNIQUE(session_id, function_call_id)` em `reservations`/`visitor_authorizations`), não só na tabela genérica `effects` — resolve exclusividade e idempotência na mesma instrução SQL.
+- **`confirmations.area/data` virou `args_json` genérico**, porque tools diferentes (reserva vs. visitante) têm parâmetros diferentes. Migrado automaticamente, sem perda de dados, testado com dados sintéticos e no banco real.
+- **Bug real do ADK encontrado em validação real** (não pego por nenhum teste com mock): o callback de `require_confirmation` recebe os argumentos de toda a tool (área E data), não só os que ele declara — precisa aceitar `**kwargs` extra.
+- **Comando de restauração implementado** (`uv run aurora-restore`): zera sessões/confirmações/reservas/visitantes e recarrega o estado inicial de `dados/*.json`. Usado pela primeira vez para encerrar uma confirmação pendente órfã (presa à tool de prova já removida) antes da validação real da Etapa 2.
+
 ## Comandos usados
 
 ```
