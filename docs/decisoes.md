@@ -52,6 +52,12 @@ Registro das decisões tomadas durante a Etapa 0 do `PLANO_INICIAL_AURORA.md`. D
 - **Busca por palavra-chave sem infraestrutura vetorial** (`aurora_assistant.regulamento.search`), como o plano original pedia — mas com uma regra de precisão: um artigo só concorre se a pergunta bater com o título do capítulo ou com pelo menos duas palavras distintas no corpo, e o resultado fica restrito a um único capítulo por chamada.
 - **Achado real em validação com Gemini**: a primeira versão da busca (sobreposição simples de 1 palavra) vazou capítulos errados (Piscina, Disposições gerais, Silêncio) numa pergunta sobre animais de estimação, por coincidência lexical ("porte" aparece em "animais de grande porte" e em "boias de grande porte"). Corrigido exigindo evidência mais forte antes de aceitar um artigo; quando a evidência é fraca, a busca agora prefere devolver vazio ("não encontrado") a arriscar o capítulo errado.
 
+## Decisões confirmadas na Etapa 5 (validação integrada, ver `docs/etapa5-validacao-integrada.md`)
+
+- **Os 15 passos do avaliador rodaram numa sequência única**, do `aurora-restore` à disputa concorrente final, contra o servidor real e o Gemini real — primeira vez que a sequência completa roda sem interrupção (etapas anteriores validaram pedaços separados entre turnos). Mensagens reescritas em relação à redação literal do enunciado, preservando a intenção, para conferir que o comportamento não depende de casar a frase exata.
+- **Passos 1–14 concluídos**, incluindo o 12 (regulamento, integrado com o histórico de reservas/visitantes da mesma sessão) e o 14 (disputa concorrente real, duas requisições HTTP simultâneas). Passo 15 (verificação estática) realizado, com pendência documental prevista: a seção Garantias do README, que é Etapa 6.
+- O reinício do passo 13 desta sequência preservou eventos/dados e permitiu continuar a conversa — não envolveu uma confirmação pendente atravessando o reinício (todas já tinham sido respondidas antes). Esse cenário específico já está evidenciado separadamente na Etapa 1.
+
 ## Comandos usados
 
 ```
