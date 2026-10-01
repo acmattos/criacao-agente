@@ -40,6 +40,12 @@ Registro das decisões tomadas durante a Etapa 0 do `PLANO_INICIAL_AURORA.md`. D
 - **Bug real do ADK encontrado em validação real** (não pego por nenhum teste com mock): o callback de `require_confirmation` recebe os argumentos de toda a tool (área E data), não só os que ele declara — precisa aceitar `**kwargs` extra.
 - **Comando de restauração implementado** (`uv run aurora-restore`): zera sessões/confirmações/reservas/visitantes e recarrega o estado inicial de `dados/*.json`. Usado pela primeira vez para encerrar uma confirmação pendente órfã (presa à tool de prova já removida) antes da validação real da Etapa 2.
 
+## Decisões confirmadas na Etapa 3 (API completa, ver `docs/etapa3-api-completa.md`)
+
+- **Rotas de verificação implementadas**: `GET /apartamentos/{id}/reservas` e `GET /apartamentos/{id}/visitantes`, lendo o SQLite direto (nunca passam pelo modelo). Apartamento sem registro devolve lista vazia, não erro — comportamento livre pelo enunciado.
+- **"Todas as pendências atuais" já estava satisfeito** desde a Etapa 1 (`storage.list_pending_confirmations` filtra por `status='pending'` da sessão inteira, não só da última chamada) — nenhuma mudança necessária.
+- **Fluxo completo do avaliador validado com Gemini real**: passos 1–11 e 13–14 do enunciado rodados contra o servidor HTTP real, incluindo reinício de processo de verdade e disputa concorrente real (dois `curl` simultâneos). Passo 12 fica para a Etapa 4 (regulamento); a sequência única dos 15 passos é Etapa 5 (validação integrada); a seção Garantias do README é Etapa 6 (documentação e entrega) — pelo plano original, não Etapa 4.
+
 ## Comandos usados
 
 ```

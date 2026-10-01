@@ -154,3 +154,79 @@ def test_eventos_lista_o_que_o_executor_devolve(client):
     resp = client.get(f"/sessoes/{session_id}/eventos")
     assert resp.status_code == 200
     assert resp.json() == [{"author": "user", "content": {"parts": []}}]
+
+
+# -- rotas de verificacao (Etapa 3): leem direto do SQLite, sem passar pelo modelo --
+
+
+def test_listar_reservas_do_apartamento(client):
+    from aurora_assistant import reservations, storage
+
+    conn = storage.connect(config.DB_PATH)
+    reservations.create_reservation(
+        conn, apartment="101", area_id="quadra", date="2030-03-09", session_id="seed", function_call_id="seed"
+    )
+    conn.close()
+
+    resp = client.get("/apartamentos/101/reservas")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["area"] == "quadra"
+    assert body[0]["data"] == "2030-03-09"
+    assert body[0]["codigo"].startswith("RSV-")
+
+
+def test_listar_reservas_nao_mostra_canceladas(client):
+    from aurora_assistant import reservations, storage
+
+    conn = storage.connect(config.DB_PATH)
+    reservations.create_reservation(
+        conn, apartment="101", area_id="quadra", date="2030-03-09", session_id="seed", function_call_id="seed"
+    )
+    reservations.cancel_reservation(conn, apartment="101", area_id="quadra", date="2030-03-09")
+    conn.close()
+
+    resp = client.get("/apartamentos/101/reservas")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_listar_reservas_de_outro_apartamento_nao_vazam(client):
+    from aurora_assistant import reservations, storage
+
+    conn = storage.connect(config.DB_PATH)
+    reservations.create_reservation(
+        conn, apartment="302", area_id="salao-de-festas", date="2030-03-16", session_id="seed", function_call_id="seed"
+    )
+    conn.close()
+
+    resp = client.get("/apartamentos/101/reservas")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_listar_reservas_apartamento_inexistente_devolve_lista_vazia(client):
+    resp = client.get("/apartamentos/999/reservas")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_listar_visitantes_do_apartamento(client):
+    from aurora_assistant import storage, visitors
+
+    conn = storage.connect(config.DB_PATH)
+    visitors.authorize_visitor(
+        conn, apartment="302", name="Marina Duarte", date="2030-03-16", session_id="seed", function_call_id="seed"
+    )
+    conn.close()
+
+    resp = client.get("/apartamentos/302/visitantes")
+    assert resp.status_code == 200
+    assert resp.json() == [{"nome": "Marina Duarte", "data": "2030-03-16"}]
+
+
+def test_listar_visitantes_apartamento_inexistente_devolve_lista_vazia(client):
+    resp = client.get("/apartamentos/999/visitantes")
+    assert resp.status_code == 200
+    assert resp.json() == []

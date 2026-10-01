@@ -1,7 +1,10 @@
-"""API minima da Etapa 1: so as quatro rotas necessarias para a prova de
-confirmacao persistida (sessao, mensagem, confirmacao, eventos). Visitantes,
-regulamento, cancelamento, agenda completa e concorrencia ficam para a
-Etapa 2.
+"""API do Residencial Aurora (Etapa 3: contrato completo do enunciado).
+
+Rotas de conversa (sessao, mensagens, confirmacoes, eventos) passam pelo
+agente/ADK via `EXECUTOR`. As rotas de verificacao (`/apartamentos/...`) leem
+os dados do condominio direto do SQLite, sem passar pelo modelo - existem
+para o avaliador conferir o efeito das conversas. Consulta ao regulamento
+fica para a Etapa 4.
 """
 
 from __future__ import annotations
@@ -11,10 +14,10 @@ import uuid
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from . import confirmation_service, runner_service, storage
+from . import confirmation_service, reservations, runner_service, storage, visitors
 from . import config
 
-app = FastAPI(title="Aurora - Etapa 1 (prova de confirmacao persistida)")
+app = FastAPI(title="Aurora - Assistente do Residencial Aurora")
 
 # Indirecao deliberada: os testes deterministicos trocam este modulo por um
 # fake (ver tests/test_api.py), sem precisar de Gemini. Em producao e o
@@ -115,3 +118,26 @@ def _dump_event(event):
     if hasattr(event, "model_dump"):
         return event.model_dump(mode="json", exclude_none=True)
     return event
+
+
+@app.get("/apartamentos/{apartamento}/reservas")
+async def listar_reservas_do_apartamento(apartamento: str):
+    """Rota de verificacao: le `reservations` direto, sem passar pelo
+    modelo. So reservas ativas (canceladas nao aparecem). Apartamento
+    inexistente devolve lista vazia - comportamento livre pelo enunciado."""
+    conn = _conn()
+    try:
+        return reservations.list_active_reservations(conn, apartment=apartamento)
+    finally:
+        conn.close()
+
+
+@app.get("/apartamentos/{apartamento}/visitantes")
+async def listar_visitantes_do_apartamento(apartamento: str):
+    """Rota de verificacao: le `visitor_authorizations` direto, sem passar
+    pelo modelo. Apartamento inexistente devolve lista vazia."""
+    conn = _conn()
+    try:
+        return visitors.list_authorized_visitors(conn, apartment=apartamento)
+    finally:
+        conn.close()
