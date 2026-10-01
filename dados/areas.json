@@ -1,0 +1,5 @@
+[
+  {"id": "salao-de-festas", "nome": "Salão de festas", "taxa": 150.0},
+  {"id": "churrasqueira", "nome": "Churrasqueira", "taxa": 80.0},
+  {"id": "quadra", "nome": "Quadra poliesportiva", "taxa": 0}
+]
